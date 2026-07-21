@@ -41,6 +41,10 @@ SET room314.name = 'Quarto 314',
     room314.description = 'O quarto 314. Não deve ser resolvido nesta investigação.',
     room314.sealed = true;
 
+MATCH (mara:NPC {id: 'mara_doyle'}),
+      (reception:Location {id: 'reception'}),
+      (corridor:Location {id: 'corridor'}),
+      (room314:Location {id: 'room_314'})
 MERGE (reception)-[:LEADS_TO]->(corridor)
 MERGE (corridor)-[:LEADS_TO]->(room314)
 MERGE (mara)-[:AT]->(reception);
@@ -127,26 +131,44 @@ SET h_elian.statement = 'A figura pode estar ligada a Elian Voss.',
 // -----------------------------------------------------------------------------
 
 // Mara privately KNOWS these canonical facts.
-MERGE (mara)-[k1:KNOWS]->(f_bell)   SET k1.certainty = 0.95, k1.reveal_policy = 'if_evidence_clock';
-MERGE (mara)-[k2:KNOWS]->(f_awake)  SET k2.certainty = 1.00, k2.reveal_policy = 'if_evidence_clock';
-MERGE (mara)-[k3:KNOWS]->(f_sealed) SET k3.certainty = 0.90, k3.reveal_policy = 'if_asked';
-MERGE (mara)-[k4:KNOWS]->(f_saw)    SET k4.certainty = 0.85, k4.reveal_policy = 'if_confronted';
-MERGE (mara)-[k5:KNOWS]->(f_light)  SET k5.certainty = 0.80, k5.reveal_policy = 'if_confronted';
-MERGE (mara)-[k6:KNOWS]->(f_elian)  SET k6.certainty = 0.70, k6.reveal_policy = 'if_evidence_ledger';
+MATCH (mara:NPC {id: 'mara_doyle'}),
+      (f_bell:Fact {id: 'bell_0217'}),
+      (f_awake:Fact {id: 'mara_awake_0217'}),
+      (f_sealed:Fact {id: 'door_was_sealed'}),
+      (f_saw:Fact {id: 'mara_saw_figure'}),
+      (f_light:Fact {id: 'figure_blue_green_light'}),
+      (f_elian:Fact {id: 'elian_voss_disappearance'}),
+      (f_allowed:Fact {id: 'mara_allowed_entry'})
+MERGE (mara)-[k1:KNOWS]->(f_bell)    SET k1.certainty = 0.95, k1.reveal_policy = 'if_evidence_clock'
+MERGE (mara)-[k2:KNOWS]->(f_awake)   SET k2.certainty = 1.00, k2.reveal_policy = 'if_evidence_clock'
+MERGE (mara)-[k3:KNOWS]->(f_sealed)  SET k3.certainty = 0.90, k3.reveal_policy = 'if_asked'
+MERGE (mara)-[k4:KNOWS]->(f_saw)     SET k4.certainty = 0.85, k4.reveal_policy = 'if_confronted'
+MERGE (mara)-[k5:KNOWS]->(f_light)   SET k5.certainty = 0.80, k5.reveal_policy = 'if_confronted'
+MERGE (mara)-[k6:KNOWS]->(f_elian)   SET k6.certainty = 0.70, k6.reveal_policy = 'if_evidence_ledger'
 MERGE (mara)-[k7:KNOWS]->(f_allowed) SET k7.certainty = 1.00, k7.reveal_policy = 'never';
 
 // Mara deliberately CONCEALS the sensitive facts. `never` = the buried secret.
-MERGE (mara)-[c1:CONCEALS]->(f_awake)   SET c1.motive = 'medo de ser responsabilizada', c1.reveal_policy = 'if_evidence_clock';
-MERGE (mara)-[c2:CONCEALS]->(f_saw)     SET c2.motive = 'culpa e medo',                 c2.reveal_policy = 'if_confronted';
-MERGE (mara)-[c3:CONCEALS]->(f_light)   SET c3.motive = 'medo do sobrenatural',         c3.reveal_policy = 'if_confronted';
+MATCH (mara:NPC {id: 'mara_doyle'}),
+      (f_awake:Fact {id: 'mara_awake_0217'}),
+      (f_saw:Fact {id: 'mara_saw_figure'}),
+      (f_light:Fact {id: 'figure_blue_green_light'}),
+      (f_allowed:Fact {id: 'mara_allowed_entry'})
+MERGE (mara)-[c1:CONCEALS]->(f_awake)   SET c1.motive = 'medo de ser responsabilizada', c1.reveal_policy = 'if_evidence_clock'
+MERGE (mara)-[c2:CONCEALS]->(f_saw)     SET c2.motive = 'culpa e medo',                 c2.reveal_policy = 'if_confronted'
+MERGE (mara)-[c3:CONCEALS]->(f_light)   SET c3.motive = 'medo do sobrenatural',         c3.reveal_policy = 'if_confronted'
 MERGE (mara)-[c4:CONCEALS]->(f_allowed) SET c4.motive = 'culpa esmagadora',             c4.reveal_policy = 'never';
 
 // Mara BELIEVES a non-canonical hypothesis, with low certainty.
+MATCH (mara:NPC {id: 'mara_doyle'}),
+      (h_elian:Hypothesis {id: 'elian_identity_hypothesis'}),
+      (e_entry:Event {id: 'entry_314_0217'})
 MERGE (mara)-[b1:BELIEVES]->(h_elian)
-SET b1.certainty = 0.40, b1.source = 'intuição e o livro de hóspedes';
+  SET b1.certainty = 0.40, b1.source = 'intuição e o livro de hóspedes'
 MERGE (h_elian)-[:CONCERNS]->(e_entry);
 
 // Mara OBSERVED the entry event — high confidence, imperfect memory.
+MATCH (mara:NPC {id: 'mara_doyle'}),
+      (e_entry:Event {id: 'entry_314_0217'})
 MERGE (mara)-[o1:OBSERVED]->(e_entry)
 SET o1.confidence = 0.85,
     o1.memory_stability = 0.60,
@@ -155,15 +177,28 @@ SET o1.confidence = 0.85,
 // -----------------------------------------------------------------------------
 // 9. Evidence -> Fact support (weights indicate probative strength).
 // -----------------------------------------------------------------------------
-MERGE (clock)-[s1:SUPPORTS]->(f_bell)     SET s1.weight = 0.9;
-MERGE (clock)-[s2:SUPPORTS]->(f_awake)    SET s2.weight = 0.6;
-MERGE (ledger)-[s3:SUPPORTS]->(f_elian)   SET s3.weight = 0.9;
-MERGE (doormark)-[s4:SUPPORTS]->(f_light) SET s4.weight = 0.5;
+MATCH (clock:Evidence {id: 'stopped_clock_0217'}),
+      (ledger:Evidence {id: 'guest_ledger_elian'}),
+      (doormark:Evidence {id: 'door_314_mark'}),
+      (f_bell:Fact {id: 'bell_0217'}),
+      (f_awake:Fact {id: 'mara_awake_0217'}),
+      (f_elian:Fact {id: 'elian_voss_disappearance'}),
+      (f_light:Fact {id: 'figure_blue_green_light'}),
+      (f_sealed:Fact {id: 'door_was_sealed'})
+MERGE (clock)-[s1:SUPPORTS]->(f_bell)      SET s1.weight = 0.9
+MERGE (clock)-[s2:SUPPORTS]->(f_awake)     SET s2.weight = 0.6
+MERGE (ledger)-[s3:SUPPORTS]->(f_elian)    SET s3.weight = 0.9
+MERGE (doormark)-[s4:SUPPORTS]->(f_light)  SET s4.weight = 0.5
 MERGE (doormark)-[s5:SUPPORTS]->(f_sealed) SET s5.weight = 0.5;
 
 // Evidence physical placement in the world.
-MERGE (clock)-[:AT]->(reception);
-MERGE (ledger)-[:AT]->(reception);
+MATCH (clock:Evidence {id: 'stopped_clock_0217'}),
+      (ledger:Evidence {id: 'guest_ledger_elian'}),
+      (doormark:Evidence {id: 'door_314_mark'}),
+      (reception:Location {id: 'reception'}),
+      (room314:Location {id: 'room_314'})
+MERGE (clock)-[:AT]->(reception)
+MERGE (ledger)-[:AT]->(reception)
 MERGE (doormark)-[:AT]->(room314);
 
 // -----------------------------------------------------------------------------
