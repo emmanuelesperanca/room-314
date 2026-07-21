@@ -1,0 +1,29 @@
+# OPTIONAL convenience only. The PoC assumes Neo4j Desktop + Ollama are already
+# installed and running locally (see README). You do NOT need Docker to run this.
+#
+# This file only spins up a Neo4j Community instance if you prefer containers.
+# Ollama and the backend/frontend are still expected to run on the host.
+#
+#   docker compose -f docker-compose.optional.yml up -d
+#
+# Then point NEO4J_URI at bolt://localhost:7687 and set NEO4J_PASSWORD below.
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: room314-neo4j
+    ports:
+      - "7474:7474"   # Neo4j Browser
+      - "7687:7687"   # Bolt
+    environment:
+      # Change this password and mirror it in your .env NEO4J_PASSWORD.
+      NEO4J_AUTH: "neo4j/change-me-please"
+      NEO4J_server_memory_pagecache_size: "512M"
+      NEO4J_server_memory_heap_max__size: "1G"
+    volumes:
+      - room314_neo4j_data:/data
+      - room314_neo4j_logs:/logs
+
+volumes:
+  room314_neo4j_data:
+  room314_neo4j_logs:
