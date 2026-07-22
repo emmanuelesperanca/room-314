@@ -13,6 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.services.case_loader import CaseDefinition, Rule, load_case
+from app.services.conditions import StateView, evaluate_condition
+
 # --------------------------------------------------------------------------- #
 # Canonical identifiers (must match neo4j/seed.cypher)
 # --------------------------------------------------------------------------- #
@@ -142,80 +145,53 @@ class RuleResult:
 
 
 # --------------------------------------------------------------------------- #
-# Action evaluation (world mechanics)
+# Data-driven evaluation (rule logic loaded from cases/<id>.yaml)
 # --------------------------------------------------------------------------- #
 
+# The world lives in Neo4j; the deterministic rule logic (gates, branches,
+# effects, reveal scope) is authored as data in cases/room_314.yaml and loaded
+# here. No rule is hardcoded in Python anymore — R8 authority is preserved.
+_CASE: CaseDefinition = load_case("room_314")
 
-def evaluate_action(state: GameState, action: Action) -> RuleResult:
-    if action == Action.EXAMINE_CLOCK:
-        # R1_EXAMINE_CLOCK
-        if state.location != LOC_RECEPTION:
-            return RuleResult(
-                "R1_EXAMINE_CLOCK", False,
-                "Você precisa estar na recepção para examinar o relógio.",
-            )
-        return RuleResult(
-            "R1_EXAMINE_CLOCK", True,
-            "Relógio examinado.",
-            narration="O relógio de parede parou exatamente às 02:17.",
-            state_delta={"guilt": 5, "fear": 2},
-            new_evidence=[EV_CLOCK],
-            new_facts=[FACT_BELL_0217],
-        )
 
-    if action == Action.EXAMINE_LEDGER:
-        # R2_EXAMINE_LEDGER
-        if state.location != LOC_RECEPTION:
-            return RuleResult(
-                "R2_EXAMINE_LEDGER", False,
-                "Você precisa estar na recepção para folhear o livro de hóspedes.",
-            )
-        return RuleResult(
-            "R2_EXAMINE_LEDGER", True,
-            "Livro de hóspedes examinado.",
-            narration='No livro, o nome "Elian Voss" aparece parcialmente apagado.',
-            state_delta={"fear": 3},
-            new_evidence=[EV_LEDGER],
-            new_facts=[FACT_ELIAN],
-        )
+def _outcome_to_result(outcome: dict) -> RuleResult:
+    """Materialize an authored outcome dict into a :class:`RuleResult`."""
 
-    if action == Action.ENTER_CORRIDOR:
-        # Movement gate: requires the key handed over by Mara (R5).
-        if not state.has_key() or not state.corridor_unlocked:
-            return RuleResult(
-                "ENTER_CORRIDOR", False,
-                "O corredor está trancado. Você precisa da chave que Mara guarda.",
-            )
-        if state.location == LOC_CORRIDOR:
-            return RuleResult("ENTER_CORRIDOR", False, "Você já está no corredor.")
-        return RuleResult(
-            "ENTER_CORRIDOR", True,
-            "Você sobe ao terceiro andar.",
-            narration="A chave gira com dificuldade. O corredor se abre à sua frente.",
-            set_location=LOC_CORRIDOR,
-        )
+    return RuleResult(
+        rule_id=outcome.get("rule_id", "UNKNOWN"),
+        allowed=bool(outcome.get("allowed", False)),
+        reason=outcome.get("reason", ""),
+        narration=outcome.get("narration", ""),
+        state_delta=dict(outcome.get("state_delta", {})),
+        new_evidence=list(outcome.get("new_evidence", [])),
+        new_facts=list(outcome.get("new_facts", [])),
+        unlocked_locations=list(outcome.get("unlocked_locations", [])),
+        granted_items=list(outcome.get("granted_items", [])),
+        events=list(outcome.get("events", [])),
+        set_location=outcome.get("set_location"),
+        allowed_reveal_facts=list(outcome.get("allowed_reveal_facts", [])),
+        forbidden_facts=list(outcome.get("forbidden_facts", [])),
+    )
 
-    if action == Action.EXAMINE_DOOR:
-        # R6_EXAMINE_DOOR — final beat.
-        if state.location != LOC_CORRIDOR:
-            return RuleResult(
-                "R6_EXAMINE_DOOR", False,
-                "A porta 314 fica no corredor. Você ainda não está lá.",
-            )
-        if not state.has_key():
-            return RuleResult(
-                "R6_EXAMINE_DOOR", False,
-                "Você precisa da chave do corredor para chegar à porta.",
-            )
-        return RuleResult(
-            "R6_EXAMINE_DOOR", True,
-            "Você examina a porta do quarto 314.",
-            narration="A porta se abre sozinha. Ao longe, o sino toca uma vez.",
-            new_evidence=[EV_DOOR_MARK],
-            events=["door_opens"],
-        )
 
-    return RuleResult("UNKNOWN_ACTION", False, "Ação desconhecida.")
+def _select_outcome(rule: Rule | None, state: GameState) -> dict | None:
+    """Return the outcome of the first branch whose condition matches."""
+
+    if rule is None:
+        return None
+    view = StateView(state)
+    for branch in rule.branches:
+        if evaluate_condition(branch.when, view):
+            return branch.outcome
+    return None
+
+
+def evaluate_action(state: GameState, action: Action | str) -> RuleResult:
+    trigger = action.value if isinstance(action, Action) else str(action)
+    outcome = _select_outcome(_CASE.actions.get(trigger), state)
+    if outcome is None:
+        return RuleResult("UNKNOWN_ACTION", False, "Ação desconhecida.")
+    return _outcome_to_result(outcome)
 
 
 # --------------------------------------------------------------------------- #
@@ -223,114 +199,17 @@ def evaluate_action(state: GameState, action: Action) -> RuleResult:
 # --------------------------------------------------------------------------- #
 
 
-def evaluate_intent(state: GameState, intent: Intent) -> RuleResult:
-    has_clock = EV_CLOCK in state.discovered_evidence
-    has_ledger = EV_LEDGER in state.discovered_evidence
-    knows_saw_figure = FACT_MARA_SAW_FIGURE in state.known_facts
-
-    if intent == Intent.ASK_ROOM_314:
-        # R3_ASK_314
-        if not has_clock:
-            return RuleResult(
-                "R3_ASK_314", True,
-                "Sem a prova do relógio, Mara evade sobre o quarto 314.",
-                allowed_reveal_facts=[],
-                forbidden_facts=[FACT_MARA_AWAKE, FACT_MARA_SAW_FIGURE, FACT_MARA_ALLOWED_ENTRY],
-            )
-        # With the clock, she may admit she was awake — but never the figure.
-        return RuleResult(
-            "R3_ASK_314", True,
-            "Com o relógio, Mara pode admitir que estava acordada às 02:17.",
-            new_facts=[FACT_MARA_AWAKE],
-            allowed_reveal_facts=[FACT_BELL_0217, FACT_MARA_AWAKE],
-            forbidden_facts=[FACT_MARA_SAW_FIGURE, FACT_FIGURE_LIGHT, FACT_MARA_ALLOWED_ENTRY],
-        )
-
-    if intent == Intent.ASK_CLOCK:
-        if not has_clock:
-            return RuleResult(
-                "R3_ASK_314", True,
-                "Mara desconversa sobre o relógio até que você o examine.",
-                allowed_reveal_facts=[],
-                forbidden_facts=[FACT_MARA_AWAKE, FACT_MARA_ALLOWED_ENTRY],
-            )
-        return RuleResult(
-            "R3_ASK_314", True,
-            "Mara reconhece a hora em que o relógio parou.",
-            allowed_reveal_facts=[FACT_BELL_0217],
-            forbidden_facts=[FACT_MARA_SAW_FIGURE, FACT_MARA_ALLOWED_ENTRY],
-        )
-
-    if intent == Intent.ASK_ELIAN:
-        if not has_ledger:
-            return RuleResult(
-                "R2_EXAMINE_LEDGER", True,
-                "Sem o livro de hóspedes, Mara nega conhecer o nome.",
-                allowed_reveal_facts=[],
-                forbidden_facts=[FACT_ELIAN, FACT_MARA_ALLOWED_ENTRY],
-            )
-        return RuleResult(
-            "R2_EXAMINE_LEDGER", True,
-            "Com o livro, Mara admite o desaparecimento de Elian Voss.",
-            new_facts=[FACT_ELIAN],
-            allowed_reveal_facts=[FACT_ELIAN],
-            forbidden_facts=[FACT_MARA_SAW_FIGURE, FACT_MARA_ALLOWED_ENTRY],
-        )
-
-    if intent == Intent.CONFRONT_MARA:
-        # R4_CONFRONT_MARA — requires BOTH evidences.
-        if not (has_clock and has_ledger):
-            return RuleResult(
-                "R4_CONFRONT_MARA", False,
-                "Você ainda não tem provas suficientes. Encontre o relógio e o livro.",
-                forbidden_facts=[FACT_MARA_SAW_FIGURE, FACT_MARA_ALLOWED_ENTRY],
-            )
-        return RuleResult(
-            "R4_CONFRONT_MARA", True,
-            "Confrontada com relógio e livro, Mara revela que viu uma figura entrar no 314.",
-            new_facts=[FACT_MARA_SAW_FIGURE, FACT_FIGURE_LIGHT],
-            state_delta={"trust": 15, "guilt": 8, "fear": 8},
-            allowed_reveal_facts=[FACT_MARA_SAW_FIGURE, FACT_FIGURE_LIGHT, FACT_MARA_AWAKE],
-            # The identity stays unresolved; the deepest secret stays buried.
-            forbidden_facts=[FACT_MARA_ALLOWED_ENTRY],
-        )
-
-    if intent == Intent.REQUEST_KEY:
-        # R5_REQUEST_KEY — requires the figure revelation.
-        if not knows_saw_figure:
-            return RuleResult(
-                "R5_REQUEST_KEY", False,
-                "Mara não confia em você o bastante para entregar a chave. Ainda não.",
-                forbidden_facts=[FACT_MARA_ALLOWED_ENTRY],
-            )
-        if state.has_key():
-            return RuleResult(
-                "R5_REQUEST_KEY", False,
-                "Você já tem a chave do corredor.",
-            )
-        return RuleResult(
-            "R5_REQUEST_KEY", True,
-            "Mara entrega a chave do corredor e libera o acesso.",
-            state_delta={"trust": 10, "fear": 5},
-            granted_items=[ITEM_KEY],
-            unlocked_locations=[LOC_CORRIDOR],
-            allowed_reveal_facts=[FACT_MARA_SAW_FIGURE],
-            forbidden_facts=[FACT_MARA_ALLOWED_ENTRY],
-        )
-
-    if intent == Intent.SMALL_TALK:
+def evaluate_intent(state: GameState, intent: Intent | str) -> RuleResult:
+    trigger = intent.value if isinstance(intent, Intent) else str(intent)
+    outcome = _select_outcome(_CASE.intents.get(trigger), state)
+    if outcome is None:
+        # Unrecognized intent → short evasion, no state change (R7).
         return RuleResult(
             "R7_FREE_TEXT", True,
-            "Conversa casual. Nenhuma mudança de estado.",
+            "Intenção não reconhecida. Mara responde com uma evasão curta.",
             forbidden_facts=[FACT_MARA_ALLOWED_ENTRY],
         )
-
-    # UNKNOWN — no state change; short evasion (R7).
-    return RuleResult(
-        "R7_FREE_TEXT", True,
-        "Intenção não reconhecida. Mara responde com uma evasão curta.",
-        forbidden_facts=[FACT_MARA_ALLOWED_ENTRY],
-    )
+    return _outcome_to_result(outcome)
 
 
 # --------------------------------------------------------------------------- #
@@ -372,26 +251,17 @@ def apply_result(state: GameState, result: RuleResult) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def allowed_suggested_intents(state: GameState, intent: Intent) -> list[str]:
-    """Which speech moves Mara may take this turn (LLM `suggested_intent` enum)."""
+def allowed_suggested_intents(state: GameState, intent: Intent | str) -> list[str]:
+    """Which speech moves Mara may take this turn (LLM `suggested_intent` enum).
 
-    has_clock = EV_CLOCK in state.discovered_evidence
-    has_ledger = EV_LEDGER in state.discovered_evidence
-    knows_saw_figure = FACT_MARA_SAW_FIGURE in state.known_facts
+    Derived from the matched branch's authored ``suggested_intents``.
+    """
 
-    if intent == Intent.ASK_ROOM_314:
-        return [SUGGESTED_REVEAL_AWAKE, SUGGESTED_EVADE] if has_clock else [SUGGESTED_DENY, SUGGESTED_EVADE]
-    if intent == Intent.ASK_CLOCK:
-        return [SUGGESTED_REVEAL_AWAKE, SUGGESTED_EVADE] if has_clock else [SUGGESTED_EVADE, SUGGESTED_SMALL_TALK]
-    if intent == Intent.ASK_ELIAN:
-        return [SUGGESTED_EVADE, SUGGESTED_SMALL_TALK] if has_ledger else [SUGGESTED_DENY, SUGGESTED_EVADE]
-    if intent == Intent.CONFRONT_MARA:
-        return [SUGGESTED_REVEAL_FIGURE, SUGGESTED_EVADE] if (has_clock and has_ledger) else [SUGGESTED_DENY, SUGGESTED_EVADE]
-    if intent == Intent.REQUEST_KEY:
-        return [SUGGESTED_OFFER_KEY, SUGGESTED_EVADE] if knows_saw_figure else [SUGGESTED_DENY, SUGGESTED_EVADE]
-    if intent == Intent.SMALL_TALK:
-        return [SUGGESTED_SMALL_TALK, SUGGESTED_EVADE]
-    return [SUGGESTED_EVADE]
+    trigger = intent.value if isinstance(intent, Intent) else str(intent)
+    outcome = _select_outcome(_CASE.intents.get(trigger), state)
+    if not outcome:
+        return [SUGGESTED_EVADE]
+    return list(outcome.get("suggested_intents", [SUGGESTED_EVADE]))
 
 
 def compute_reveal_scope(state: GameState, intent: Intent, result: RuleResult) -> tuple[list[str], list[str]]:
