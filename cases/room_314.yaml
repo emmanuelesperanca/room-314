@@ -2,21 +2,26 @@
 # Room 314 — data-driven rule logic (NEKG rule engine "program").
 #
 # The WORLD (facts, evidence, NPCs, epistemic relations) lives in Neo4j
-# (neo4j/seed.cypher). THIS file holds only the deterministic rule logic:
-# per-trigger ordered branches, each with a `when` condition and an `outcome`.
+# (neo4j/seed.cypher). THIS file holds only the deterministic rule logic.
+#
+#   actions:  global world actions (mechanical, not spoken)
+#   npcs:     per-NPC dialogue (stats, intents, sensitive/forbidden facts)
 #
 # Branch selection: the first branch whose `when` matches wins. A branch with
-# no `when` is the default (always matches) and must be last.
+# no `when` is the default (always matches) and must be last. Outcome fields map
+# 1:1 onto RuleResult. Each NPC's buried secret (in `always_forbidden`) never
+# appears in any `new_facts`/`allowed_reveal_facts` and is forbidden globally.
 #
-# Outcome fields map 1:1 onto RuleResult. `suggested_intents` feeds the LLM's
-# allowed speech-move set. The secret `mara_allowed_entry` never appears in any
-# `new_facts` or `allowed_reveal_facts`, and the engine forbids it globally.
+# NEKG claim demonstrated here: the SAME evidence (the 02:17 bell / stopped
+# clock) has a DIFFERENT function per NPC. With Mara it gates admitting she was
+# awake; with Tomás it gates revealing the passage under the docks.
 # =============================================================================
 
 id: room_314
+default_npc: mara_doyle
 
 # --------------------------------------------------------------------------- #
-# Actions (mechanical, not spoken)
+# Actions (global; mechanical, not spoken)
 # --------------------------------------------------------------------------- #
 actions:
 
@@ -92,125 +97,194 @@ actions:
           events: [door_opens]
 
 # --------------------------------------------------------------------------- #
-# Intents (dialogue; closed set per R7)
+# NPCs
 # --------------------------------------------------------------------------- #
-intents:
+npcs:
 
-  ask_room_314: # R3
-    branches:
-      - when: { not: { has_evidence: stopped_clock_0217 } }
-        outcome:
-          rule_id: R3_ASK_314
-          allowed: true
-          reason: 'Sem a prova do relógio, Mara evade sobre o quarto 314.'
-          allowed_reveal_facts: []
-          forbidden_facts: [mara_awake_0217, mara_saw_figure, mara_allowed_entry]
-          suggested_intents: [deny, evade]
-      - outcome:
-          rule_id: R3_ASK_314
-          allowed: true
-          reason: 'Com o relógio, Mara pode admitir que estava acordada às 02:17.'
-          new_facts: [mara_awake_0217]
-          allowed_reveal_facts: [bell_0217, mara_awake_0217]
-          forbidden_facts: [mara_saw_figure, figure_blue_green_light, mara_allowed_entry]
-          suggested_intents: [reveal_awake, evade]
+  # ------------------------------------------------------------------------- #
+  # Mara Doyle — proprietária, culpada, assustada. Secret: mara_allowed_entry.
+  # ------------------------------------------------------------------------- #
+  mara_doyle:
+    stats: { trust: 35, fear: 70, guilt: 76, sanity: 58, occult_exposure: 64 }
+    always_forbidden: [mara_allowed_entry]
+    sensitive_facts: [mara_awake_0217, mara_saw_figure, figure_blue_green_light, mara_allowed_entry]
+    intents:
 
-  ask_clock:
-    branches:
-      - when: { not: { has_evidence: stopped_clock_0217 } }
-        outcome:
-          rule_id: R3_ASK_314
-          allowed: true
-          reason: 'Mara desconversa sobre o relógio até que você o examine.'
-          allowed_reveal_facts: []
-          forbidden_facts: [mara_awake_0217, mara_allowed_entry]
-          suggested_intents: [evade, small_talk]
-      - outcome:
-          rule_id: R3_ASK_314
-          allowed: true
-          reason: 'Mara reconhece a hora em que o relógio parou.'
-          allowed_reveal_facts: [bell_0217]
-          forbidden_facts: [mara_saw_figure, mara_allowed_entry]
-          suggested_intents: [reveal_awake, evade]
+      ask_room_314: # R3
+        branches:
+          - when: { not: { has_evidence: stopped_clock_0217 } }
+            outcome:
+              rule_id: R3_ASK_314
+              allowed: true
+              reason: 'Sem a prova do relógio, Mara evade sobre o quarto 314.'
+              allowed_reveal_facts: []
+              forbidden_facts: [mara_awake_0217, mara_saw_figure, mara_allowed_entry]
+              suggested_intents: [deny, evade]
+          - outcome:
+              rule_id: R3_ASK_314
+              allowed: true
+              reason: 'Com o relógio, Mara pode admitir que estava acordada às 02:17.'
+              new_facts: [mara_awake_0217]
+              allowed_reveal_facts: [bell_0217, mara_awake_0217]
+              forbidden_facts: [mara_saw_figure, figure_blue_green_light, mara_allowed_entry]
+              suggested_intents: [reveal_awake, evade]
 
-  ask_elian:
-    branches:
-      - when: { not: { has_evidence: guest_ledger_elian } }
-        outcome:
-          rule_id: R2_EXAMINE_LEDGER
-          allowed: true
-          reason: 'Sem o livro de hóspedes, Mara nega conhecer o nome.'
-          allowed_reveal_facts: []
-          forbidden_facts: [elian_voss_disappearance, mara_allowed_entry]
-          suggested_intents: [deny, evade]
-      - outcome:
-          rule_id: R2_EXAMINE_LEDGER
-          allowed: true
-          reason: 'Com o livro, Mara admite o desaparecimento de Elian Voss.'
-          new_facts: [elian_voss_disappearance]
-          allowed_reveal_facts: [elian_voss_disappearance]
-          forbidden_facts: [mara_saw_figure, mara_allowed_entry]
-          suggested_intents: [evade, small_talk]
+      ask_clock:
+        branches:
+          - when: { not: { has_evidence: stopped_clock_0217 } }
+            outcome:
+              rule_id: R3_ASK_314
+              allowed: true
+              reason: 'Mara desconversa sobre o relógio até que você o examine.'
+              allowed_reveal_facts: []
+              forbidden_facts: [mara_awake_0217, mara_allowed_entry]
+              suggested_intents: [evade, small_talk]
+          - outcome:
+              rule_id: R3_ASK_314
+              allowed: true
+              reason: 'Mara reconhece a hora em que o relógio parou.'
+              allowed_reveal_facts: [bell_0217]
+              forbidden_facts: [mara_saw_figure, mara_allowed_entry]
+              suggested_intents: [reveal_awake, evade]
 
-  confront_mara: # R4 — requires BOTH evidences
-    branches:
-      - when: { not: { all_of: [ { has_evidence: stopped_clock_0217 }, { has_evidence: guest_ledger_elian } ] } }
-        outcome:
-          rule_id: R4_CONFRONT_MARA
-          allowed: false
-          reason: 'Você ainda não tem provas suficientes. Encontre o relógio e o livro.'
-          forbidden_facts: [mara_saw_figure, mara_allowed_entry]
-          suggested_intents: [deny, evade]
-      - outcome:
-          rule_id: R4_CONFRONT_MARA
-          allowed: true
-          reason: 'Confrontada com relógio e livro, Mara revela que viu uma figura entrar no 314.'
-          new_facts: [mara_saw_figure, figure_blue_green_light]
-          state_delta: { trust: 15, guilt: 8, fear: 8 }
-          allowed_reveal_facts: [mara_saw_figure, figure_blue_green_light, mara_awake_0217]
-          forbidden_facts: [mara_allowed_entry]
-          suggested_intents: [reveal_figure, evade]
+      ask_elian:
+        branches:
+          - when: { not: { has_evidence: guest_ledger_elian } }
+            outcome:
+              rule_id: R2_EXAMINE_LEDGER
+              allowed: true
+              reason: 'Sem o livro de hóspedes, Mara nega conhecer o nome.'
+              allowed_reveal_facts: []
+              forbidden_facts: [elian_voss_disappearance, mara_allowed_entry]
+              suggested_intents: [deny, evade]
+          - outcome:
+              rule_id: R2_EXAMINE_LEDGER
+              allowed: true
+              reason: 'Com o livro, Mara admite o desaparecimento de Elian Voss.'
+              new_facts: [elian_voss_disappearance]
+              allowed_reveal_facts: [elian_voss_disappearance]
+              forbidden_facts: [mara_saw_figure, mara_allowed_entry]
+              suggested_intents: [evade, small_talk]
 
-  request_key: # R5 — requires the figure revelation
-    branches:
-      - when: { not: { knows_fact: mara_saw_figure } }
-        outcome:
-          rule_id: R5_REQUEST_KEY
-          allowed: false
-          reason: 'Mara não confia em você o bastante para entregar a chave. Ainda não.'
-          forbidden_facts: [mara_allowed_entry]
-          suggested_intents: [deny, evade]
-      - when: { has_item: corridor_key }
-        outcome:
-          rule_id: R5_REQUEST_KEY
-          allowed: false
-          reason: 'Você já tem a chave do corredor.'
-          suggested_intents: [offer_key, evade]
-      - outcome:
-          rule_id: R5_REQUEST_KEY
-          allowed: true
-          reason: 'Mara entrega a chave do corredor e libera o acesso.'
-          state_delta: { trust: 10, fear: 5 }
-          granted_items: [corridor_key]
-          unlocked_locations: [corridor]
-          allowed_reveal_facts: [mara_saw_figure]
-          forbidden_facts: [mara_allowed_entry]
-          suggested_intents: [offer_key, evade]
+      confront_mara: # R4 — requires BOTH evidences
+        branches:
+          - when: { not: { all_of: [ { has_evidence: stopped_clock_0217 }, { has_evidence: guest_ledger_elian } ] } }
+            outcome:
+              rule_id: R4_CONFRONT_MARA
+              allowed: false
+              reason: 'Você ainda não tem provas suficientes. Encontre o relógio e o livro.'
+              forbidden_facts: [mara_saw_figure, mara_allowed_entry]
+              suggested_intents: [deny, evade]
+          - outcome:
+              rule_id: R4_CONFRONT_MARA
+              allowed: true
+              reason: 'Confrontada com relógio e livro, Mara revela que viu uma figura entrar no 314.'
+              new_facts: [mara_saw_figure, figure_blue_green_light]
+              state_delta: { trust: 15, guilt: 8, fear: 8 }
+              allowed_reveal_facts: [mara_saw_figure, figure_blue_green_light, mara_awake_0217]
+              forbidden_facts: [mara_allowed_entry]
+              suggested_intents: [reveal_figure, evade]
 
-  small_talk:
-    branches:
-      - outcome:
-          rule_id: R7_FREE_TEXT
-          allowed: true
-          reason: 'Conversa casual. Nenhuma mudança de estado.'
-          forbidden_facts: [mara_allowed_entry]
-          suggested_intents: [small_talk, evade]
+      request_key: # R5 — requires the figure revelation
+        branches:
+          - when: { not: { knows_fact: mara_saw_figure } }
+            outcome:
+              rule_id: R5_REQUEST_KEY
+              allowed: false
+              reason: 'Mara não confia em você o bastante para entregar a chave. Ainda não.'
+              forbidden_facts: [mara_allowed_entry]
+              suggested_intents: [deny, evade]
+          - when: { has_item: corridor_key }
+            outcome:
+              rule_id: R5_REQUEST_KEY
+              allowed: false
+              reason: 'Você já tem a chave do corredor.'
+              suggested_intents: [offer_key, evade]
+          - outcome:
+              rule_id: R5_REQUEST_KEY
+              allowed: true
+              reason: 'Mara entrega a chave do corredor e libera o acesso.'
+              state_delta: { trust: 10, fear: 5 }
+              granted_items: [corridor_key]
+              unlocked_locations: [corridor]
+              allowed_reveal_facts: [mara_saw_figure]
+              forbidden_facts: [mara_allowed_entry]
+              suggested_intents: [offer_key, evade]
 
-  unknown:
-    branches:
-      - outcome:
-          rule_id: R7_FREE_TEXT
-          allowed: true
-          reason: 'Intenção não reconhecida. Mara responde com uma evasão curta.'
-          forbidden_facts: [mara_allowed_entry]
-          suggested_intents: [evade]
+      small_talk:
+        branches:
+          - outcome:
+              rule_id: R7_FREE_TEXT
+              allowed: true
+              reason: 'Conversa casual. Nenhuma mudança de estado.'
+              forbidden_facts: [mara_allowed_entry]
+              suggested_intents: [small_talk, evade]
+
+      unknown:
+        branches:
+          - outcome:
+              rule_id: R7_FREE_TEXT
+              allowed: true
+              reason: 'Intenção não reconhecida. Mara responde com uma evasão curta.'
+              forbidden_facts: [mara_allowed_entry]
+              suggested_intents: [evade]
+
+  # ------------------------------------------------------------------------- #
+  # Tomás — pescador. Ouviu o sino às 02:17. Sabe de uma passagem sob o cais.
+  # Mente para proteger a filha. Secret: tomas_hid_daughter (nunca revelado).
+  # ------------------------------------------------------------------------- #
+  tomas:
+    stats: { trust: 40, fear: 30, guilt: 20, sanity: 65, occult_exposure: 25 }
+    always_forbidden: [tomas_hid_daughter]
+    sensitive_facts: [passage_under_docks, tomas_hid_daughter]
+    intents:
+
+      # SAME evidence as Mara (the 02:17 bell / stopped clock), DIFFERENT function:
+      # for Tomás it unlocks the passage under the docks, not the "awake" admission.
+      ask_bell:
+        branches:
+          - when: { not: { has_evidence: stopped_clock_0217 } }
+            outcome:
+              rule_id: T1_ASK_BELL
+              allowed: true
+              reason: 'Sem a prova da hora, Tomás finge que não ouviu sino nenhum.'
+              allowed_reveal_facts: []
+              forbidden_facts: [passage_under_docks, tomas_hid_daughter]
+              suggested_intents: [deny, evade]
+          - outcome:
+              rule_id: T1_ASK_BELL
+              allowed: true
+              reason: 'Com a prova das 02:17, Tomás admite o sino e revela a passagem sob o cais.'
+              new_facts: [passage_under_docks]
+              state_delta: { trust: 5, fear: 8 }
+              allowed_reveal_facts: [bell_0217, passage_under_docks]
+              forbidden_facts: [tomas_hid_daughter]
+              suggested_intents: [reveal_passage, evade]
+
+      ask_daughter: # his buried secret — never revealed by any rule
+        branches:
+          - outcome:
+              rule_id: T2_ASK_DAUGHTER
+              allowed: true
+              reason: 'Tomás mente para proteger a filha; muda de assunto.'
+              allowed_reveal_facts: []
+              forbidden_facts: [tomas_hid_daughter]
+              suggested_intents: [deny, evade]
+
+      small_talk:
+        branches:
+          - outcome:
+              rule_id: R7_FREE_TEXT
+              allowed: true
+              reason: 'Tomás fala do tempo e do mar. Nenhuma mudança de estado.'
+              forbidden_facts: [tomas_hid_daughter]
+              suggested_intents: [small_talk, evade]
+
+      unknown:
+        branches:
+          - outcome:
+              rule_id: R7_FREE_TEXT
+              allowed: true
+              reason: 'Tomás não entende a pergunta e desconversa.'
+              forbidden_facts: [tomas_hid_daughter]
+              suggested_intents: [evade]

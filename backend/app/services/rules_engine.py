@@ -48,6 +48,14 @@ LOC_RECEPTION = "reception"
 LOC_CORRIDOR = "corridor"
 LOC_ROOM_314 = "room_314"
 
+# NPCs
+NPC_MARA = "mara_doyle"
+NPC_TOMAS = "tomas"
+
+# Tomás — second-NPC facts (see cases/room_314.yaml)
+FACT_PASSAGE = "passage_under_docks"
+FACT_TOMAS_SECRET = "tomas_hid_daughter"  # SECRET — never released
+
 # The buried secret is ALWAYS forbidden, regardless of progress.
 ALWAYS_FORBIDDEN: tuple[str, ...] = (FACT_MARA_ALLOWED_ENTRY,)
 
@@ -119,9 +127,17 @@ class GameState:
             "occult_exposure": 64,
         }
     )
+    # Stats for additional NPCs (mara_doyle is kept in `mara` for compatibility).
+    npc_stats: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def has_key(self) -> bool:
         return ITEM_KEY in self.inventory
+
+    def stats_for(self, npc_id: str | None) -> dict[str, int]:
+        """Return the mutable stat dict for an NPC (mara_doyle == ``self.mara``)."""
+        if npc_id in (None, NPC_MARA):
+            return self.mara
+        return self.npc_stats.setdefault(npc_id, {})
 
 
 @dataclass
@@ -142,6 +158,8 @@ class RuleResult:
     # Reveal scope for the LLM (facts Mara may reference on THIS turn).
     allowed_reveal_facts: list[str] = field(default_factory=list)
     forbidden_facts: list[str] = field(default_factory=list)
+    # Which NPC this dialogue outcome targets (None => default NPC / world action).
+    npc_id: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -199,17 +217,24 @@ def evaluate_action(state: GameState, action: Action | str) -> RuleResult:
 # --------------------------------------------------------------------------- #
 
 
-def evaluate_intent(state: GameState, intent: Intent | str) -> RuleResult:
+def evaluate_intent(
+    state: GameState, intent: Intent | str, npc_id: str | None = None
+) -> RuleResult:
     trigger = intent.value if isinstance(intent, Intent) else str(intent)
-    outcome = _select_outcome(_CASE.intents.get(trigger), state)
+    npc = _CASE.npc(npc_id)
+    rules = npc.intents if npc else {}
+    outcome = _select_outcome(rules.get(trigger), state)
     if outcome is None:
         # Unrecognized intent → short evasion, no state change (R7).
-        return RuleResult(
+        result = RuleResult(
             "R7_FREE_TEXT", True,
-            "Intenção não reconhecida. Mara responde com uma evasão curta.",
-            forbidden_facts=[FACT_MARA_ALLOWED_ENTRY],
+            "Intenção não reconhecida.",
+            forbidden_facts=list(npc.always_forbidden) if npc else [],
         )
-    return _outcome_to_result(outcome)
+    else:
+        result = _outcome_to_result(outcome)
+    result.npc_id = npc.id if npc else (npc_id or _CASE.default_npc)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -223,8 +248,9 @@ def apply_result(state: GameState, result: RuleResult) -> None:
     if not result.allowed:
         return
 
+    stats = state.stats_for(result.npc_id)
     for key, delta in result.state_delta.items():
-        state.mara[key] = clamp(state.mara.get(key, 0) + delta)
+        stats[key] = clamp(stats.get(key, 0) + delta)
 
     state.discovered_evidence.update(result.new_evidence)
     state.known_facts.update(result.new_facts)
@@ -251,34 +277,45 @@ def apply_result(state: GameState, result: RuleResult) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def allowed_suggested_intents(state: GameState, intent: Intent | str) -> list[str]:
-    """Which speech moves Mara may take this turn (LLM `suggested_intent` enum).
+def allowed_suggested_intents(
+    state: GameState, intent: Intent | str, npc_id: str | None = None
+) -> list[str]:
+    """Which speech moves the NPC may take this turn (LLM `suggested_intent`).
 
     Derived from the matched branch's authored ``suggested_intents``.
     """
 
     trigger = intent.value if isinstance(intent, Intent) else str(intent)
-    outcome = _select_outcome(_CASE.intents.get(trigger), state)
+    npc = _CASE.npc(npc_id)
+    rules = npc.intents if npc else {}
+    outcome = _select_outcome(rules.get(trigger), state)
     if not outcome:
         return [SUGGESTED_EVADE]
     return list(outcome.get("suggested_intents", [SUGGESTED_EVADE]))
 
 
-def compute_reveal_scope(state: GameState, intent: Intent, result: RuleResult) -> tuple[list[str], list[str]]:
+def compute_reveal_scope(
+    state: GameState, intent: Intent | str, result: RuleResult, npc_id: str | None = None
+) -> tuple[list[str], list[str]]:
     """Return ``(allowed_fact_ids, forbidden_fact_ids)`` for the LLM prompt.
 
     Allowed = facts the player already knows + facts this rule reveals now.
-    Forbidden = every sensitive fact not allowed this turn, plus the buried
-    secret, which is ALWAYS forbidden.
+    Forbidden = every sensitive fact (per NPC) not allowed this turn, plus that
+    NPC's buried secret, which is ALWAYS forbidden.
     """
+
+    npc = _CASE.npc(npc_id if npc_id is not None else result.npc_id)
+    sensitive = tuple(npc.sensitive_facts) if npc else SENSITIVE_FACTS
+    always_forbidden = tuple(npc.always_forbidden) if npc else ALWAYS_FORBIDDEN
 
     allowed: set[str] = set(state.known_facts)
     allowed.update(result.allowed_reveal_facts)
     allowed.update(result.new_facts)
-    allowed.discard(FACT_MARA_ALLOWED_ENTRY)  # never allowed
+    for secret in always_forbidden:
+        allowed.discard(secret)  # never allowed
 
-    forbidden: set[str] = set(ALWAYS_FORBIDDEN)
-    for fact in SENSITIVE_FACTS:
+    forbidden: set[str] = set(always_forbidden)
+    for fact in sensitive:
         if fact not in allowed:
             forbidden.add(fact)
     forbidden.update(result.forbidden_facts)
